@@ -90,6 +90,34 @@ def test_main_no_pyc(fancy_wheel, tmp_path):
     assert set(installed_pyc_files) == set()
 
 
+def test_main_reproducible(fancy_wheel, tmp_path, monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    destdir = tmp_path / "dest"
+
+    main(
+        [str(fancy_wheel), "-d", str(destdir), "--reproducible"],
+        "python -m installer",
+    )
+
+    pyc_files = list(destdir.rglob("*.pyc"))
+    assert pyc_files
+    for pyc in pyc_files:
+        flags = int.from_bytes(pyc.read_bytes()[4:8], "little")
+        assert flags == 3  # hash-based invalidation
+        assert int(pyc.stat().st_mtime) == 1700000000
+
+
+def test_main_reproducible_without_epoch_fails(fancy_wheel, tmp_path, monkeypatch):
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    destdir = tmp_path / "dest"
+
+    with pytest.raises(Exception, match="SOURCE_DATE_EPOCH"):
+        main(
+            [str(fancy_wheel), "-d", str(destdir), "--reproducible"],
+            "python -m installer",
+        )
+
+
 @pytest.mark.parametrize(
     "validation_part",
     ["all", "entries", "none"],

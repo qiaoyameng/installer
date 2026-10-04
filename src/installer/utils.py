@@ -35,6 +35,7 @@ __all__ = [
     "construct_record_file",
     "copyfileobj_with_hashing",
     "fix_shebang",
+    "get_source_date_epoch",
     "get_launcher_kind",
     "make_file_executable",
     "parse_entrypoints",
@@ -169,6 +170,37 @@ def get_launcher_kind() -> "LauncherKind":  # pragma: no cover
         return "win-ia32"
 
     raise NotImplementedError("Unknown launcher kind for this machine")
+
+
+def get_source_date_epoch() -> int:
+    """Read and validate the ``SOURCE_DATE_EPOCH`` environment variable.
+
+    This is the fixed timestamp source for reproducible installations, as
+    described by https://reproducible-builds.org/docs/source-date-epoch/.
+
+    The value must be an ASCII-encoded, non-negative integer (number of
+    seconds since the Unix epoch); leading ``+``/``-`` signs, surrounding
+    whitespace, and any other characters are rejected.
+
+    :raises ReproducibleInstallError: if the variable is unset or invalid.
+    :return: the value of ``SOURCE_DATE_EPOCH``.
+    """
+    from installer.exceptions import ReproducibleInstallError
+
+    raw = os.environ.get("SOURCE_DATE_EPOCH")
+    if raw is None:
+        raise ReproducibleInstallError(
+            "SOURCE_DATE_EPOCH is not set. A reproducible installation requires a "
+            "fixed timestamp; set SOURCE_DATE_EPOCH to a non-negative integer "
+            "(seconds since the Unix epoch)."
+        )
+    if not raw or not raw.isascii() or not raw.isdigit():
+        raise ReproducibleInstallError(
+            f"SOURCE_DATE_EPOCH has an invalid value: {raw!r}. It must be a "
+            "non-negative integer (seconds since the Unix epoch), without signs "
+            "or surrounding whitespace."
+        )
+    return int(raw)
 
 
 @contextlib.contextmanager
