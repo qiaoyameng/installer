@@ -80,6 +80,10 @@ def install(
     # RECORD handling
     record_file_path = posixpath.join(source.dist_info_dir, "RECORD")
     written_records = []
+    additional_metadata_paths = {
+        posixpath.join(source.dist_info_dir, filename)
+        for filename in additional_metadata
+    }
 
     # Write the entry_points based scripts.
     if "entry_points.txt" in source.dist_info_filenames:
@@ -99,6 +103,9 @@ def install(
         path = source_record.path
         # Skip the RECORD, which is written at the end, based on this info.
         if path == record_file_path:
+            continue
+
+        if path in additional_metadata_paths:
             continue
 
         if "__pycache__" in path.split("/")[:-1]:

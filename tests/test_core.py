@@ -96,6 +96,41 @@ class FakeWheelSource(WheelSource):
 # Actual Tests
 # --------------------------------------------------------------------------------------
 class TestInstall:
+    def test_additional_metadata_overrides_wheel_member(self, mock_destination):
+        source = FakeWheelSource(
+            distribution="fancy",
+            version="1.0.0",
+            regular_files={},
+            dist_info_files={
+                "INSTALLER": b"wheel-installer\n",
+                "WHEEL": b"""\
+                    Wheel-Version: 1.0
+                    Root-Is-Purelib: true
+                    Tag: py3-none-any
+                """,
+                "METADATA": b"""\
+                    Metadata-Version: 2.1
+                    Name: fancy
+                    Version: 1.0.0
+                """,
+            },
+        )
+
+        install(
+            source=source,
+            destination=mock_destination,
+            additional_metadata={"INSTALLER": b"chosen-installer\n"},
+        )
+
+        write_paths = [
+            call.kwargs["path"]
+            for call in mock_destination.write_file.call_args_list
+        ]
+        installer_paths = [
+            path for path in write_paths if path.endswith("/INSTALLER")
+        ]
+        assert installer_paths == ["fancy-1.0.0.dist-info/INSTALLER"]
+
     def test_calls_destination_correctly(self, mock_destination):
         # Create a fake wheel
         source = FakeWheelSource(

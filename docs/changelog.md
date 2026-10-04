@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a pure installation planning API for detecting wheel file and entry-point conflicts.
+- Skip wheel members replaced by caller-provided additional metadata.
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
 
