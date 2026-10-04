@@ -76,6 +76,7 @@ def install(
 
     """
     root_scheme = _process_WHEEL_file(source)
+    additional_metadata_filenames = set(additional_metadata)
 
     # RECORD handling
     record_file_path = posixpath.join(source.dist_info_dir, "RECORD")
@@ -114,12 +115,19 @@ def install(
             )
             continue
 
-        # Figure out where to write this file.
         scheme, destination_path = _determine_scheme(
             path=path,
             source=source,
             root_scheme=root_scheme,
         )
+
+        if (
+            scheme == root_scheme
+            and posixpath.split(path)[0] == source.dist_info_dir
+            and destination_path in additional_metadata_filenames
+        ):
+            continue
+
         record = destination.write_file(
             scheme=scheme,
             path=destination_path,

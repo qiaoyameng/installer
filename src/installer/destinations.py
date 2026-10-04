@@ -97,7 +97,6 @@ class WheelDestination:
         """
         raise NotImplementedError
 
-
 @dataclass
 class SchemeDictionaryDestination(WheelDestination):
     """Destination, based on a mapping of {scheme: file-system-path}."""
@@ -284,23 +283,29 @@ class SchemeDictionaryDestination(WheelDestination):
         :param records: entries to write to the ``RECORD`` file
         """
 
-        def prefix_for_scheme(file_scheme: str) -> str | None:
-            if file_scheme == scheme:
-                return None
-            if _WINDOWS:  # pragma: no cover
-                path = os.path.abspath(self.scheme_dict[file_scheme])  # noqa: PTH100
-            else:  # pragma: no cover
-                path = os.path.relpath(
-                    self.scheme_dict[file_scheme],
-                    start=self.scheme_dict[scheme],
-                )
-            return path + "/"
-
         record_list = list(records)
-        with construct_record_file(record_list, prefix_for_scheme) as record_stream:
+        with construct_record_file(
+            record_list,
+            lambda file_scheme: self.record_prefix_for_scheme(file_scheme, scheme),
+        ) as record_stream:
             self.write_to_fs(
                 scheme, record_file_path, record_stream, is_executable=False
             )
 
         for scheme_, record in record_list:
             self._compile_bytecode(scheme_, record)
+
+    def record_prefix_for_scheme(
+        self, file_scheme: Scheme, root_scheme: Scheme
+    ) -> str | None:
+        """Get the prefix used when writing another scheme's path to RECORD."""
+        if file_scheme == root_scheme:
+            return None
+        if _WINDOWS:  # pragma: no cover
+            path = os.path.abspath(self.scheme_dict[file_scheme])  # noqa: PTH100
+        else:  # pragma: no cover
+            path = os.path.relpath(
+                self.scheme_dict[file_scheme],
+                start=self.scheme_dict[root_scheme],
+            )
+        return path + "/"

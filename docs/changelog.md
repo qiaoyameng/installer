@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a pure planning API for calculating wheel member destinations and
+  detecting path conflicts before writing to the target filesystem.
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
 
