@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add two-phase `installer.uninstall` support for safe removal of installed
+  distributions, with conservative RECORD validation, shared ownership checks,
+  proven bytecode handling, and staging-based recovery.
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
 
