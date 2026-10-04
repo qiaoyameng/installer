@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add reproducible installation mode, opt-in via
+  ``SchemeDictionaryDestination(reproducible=True)`` or the
+  ``--reproducible`` CLI flag. It fixes file and directory permissions,
+  takes modification times from the ``SOURCE_DATE_EPOCH`` environment
+  variable, compiles bytecode with explicit hash-based invalidation
+  (:pep:`552`) and embeds the logical installation path (not the staging
+  directory) in ``.pyc`` files. Invalid ``SOURCE_DATE_EPOCH`` values or an
+  interpreter without hash-based ``.pyc`` support raise a clear error
+  instead of silently producing timestamp-based bytecode. Default
+  installation behaviour is unchanged; byte-identical output across Python
+  versions is not guaranteed.
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
 

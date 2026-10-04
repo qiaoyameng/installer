@@ -4,6 +4,7 @@ import pytest
 
 from installer.__main__ import _get_scheme_dict as get_scheme_dict
 from installer.__main__ import _main as main
+from installer.exceptions import InvalidSourceDateEpoch
 
 
 def test_get_scheme_dict():
@@ -111,3 +112,35 @@ def test_main_validate_record_all_pass(fancy_wheel, tmp_path, validation_part):
         "__init__",
         "__main__",
     }
+
+
+def test_main_reproducible_without_source_date_epoch_raises(
+    fancy_wheel, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+
+    with pytest.raises(InvalidSourceDateEpoch):
+        main(
+            [
+                str(fancy_wheel),
+                "-d",
+                str(tmp_path / "dest"),
+                "--reproducible",
+            ],
+            "python -m installer",
+        )
+
+
+def test_main_reproducible(fancy_wheel, tmp_path, monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    destdir = tmp_path / "dest"
+
+    main(
+        [str(fancy_wheel), "-d", str(destdir), "--reproducible"],
+        "python -m installer",
+    )
+
+    pyc_files = list(destdir.rglob("*.pyc"))
+    assert pyc_files
+    for pyc_file in pyc_files:
+        assert pyc_file.stat().st_mtime_ns == 1700000000 * 1_000_000_000

@@ -2,15 +2,21 @@
 
 import io
 import os
+import re
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     BinaryIO,
+    ClassVar,
     Union,
 )
 
+from installer.exceptions import (
+    InvalidReproducibleConfiguration,
+    InvalidSourceDateEpoch,
+)
 from installer.records import Hash, RecordEntry
 from installer.scripts import Script
 from installer.utils import (
@@ -24,6 +30,61 @@ from installer.utils import (
 
 if TYPE_CHECKING:
     from installer.scripts import LauncherKind, ScriptSection
+
+# Fixed permission bits used for reproducible installations.
+_REPRODUCIBLE_FILE_MODE = 0o644
+_REPRODUCIBLE_EXECUTABLE_MODE = 0o755
+_REPRODUCIBLE_DIR_MODE = 0o755
+
+# Maximum Unix timestamp accepted from SOURCE_DATE_EPOCH (signed 64-bit).
+_MAX_SOURCE_DATE_EPOCH = 2**63 - 1
+
+# SOURCE_DATE_EPOCH must be an unsigned integer consisting of ASCII digits:
+# https://reproducible-builds.org/docs/source-date-epoch/
+_SOURCE_DATE_EPOCH_REGEX = re.compile(r"[0-9]+")
+
+
+def _read_source_date_epoch() -> int:
+    """Read and validate ``SOURCE_DATE_EPOCH`` from the environment.
+
+    :raises InvalidSourceDateEpoch: if the variable is unset, empty or not a
+        valid non-negative integer Unix timestamp.
+    """
+    raw_value = os.environ.get("SOURCE_DATE_EPOCH")
+    if raw_value is None:
+        msg = (
+            "Reproducible installation requires the SOURCE_DATE_EPOCH "
+            "environment variable to be set to a non-negative integer Unix "
+            "timestamp (see https://reproducible-builds.org/docs/source-date-epoch/)."
+        )
+        raise InvalidSourceDateEpoch(msg)
+
+    value = raw_value.strip()
+    if not _SOURCE_DATE_EPOCH_REGEX.fullmatch(value):
+        msg = (
+            f"Invalid SOURCE_DATE_EPOCH value {raw_value!r}: expected a "
+            "non-negative integer Unix timestamp."
+        )
+        raise InvalidSourceDateEpoch(msg)
+
+    epoch = int(value)
+    if epoch > _MAX_SOURCE_DATE_EPOCH:
+        msg = (
+            f"Invalid SOURCE_DATE_EPOCH value {raw_value!r}: timestamp must "
+            f"be at most {_MAX_SOURCE_DATE_EPOCH}."
+        )
+        raise InvalidSourceDateEpoch(msg)
+
+    return epoch
+
+
+def _supports_hash_based_pyc() -> bool:
+    """Whether the running interpreter supports hash-based pyc invalidation."""
+    import py_compile
+
+    return hasattr(py_compile, "PycInvalidationMode") and hasattr(
+        py_compile.PycInvalidationMode, "CHECKED_HASH"
+    )
 
 
 class WheelDestination:
@@ -135,6 +196,102 @@ class SchemeDictionaryDestination(WheelDestination):
     overwrite_existing: bool = False
     """Silently overwrite existing files."""
 
+    reproducible: bool = False
+    """Perform a reproducible installation.
+
+    When enabled, all aspects of the installation are made independent of
+    the current time, the process umask and the (possibly random) staging
+    directory:
+
+    - File and directory permission bits are fixed (``0644`` for regular
+      files, ``0755`` for executables and directories), ignoring the umask.
+    - File and directory modification times are taken from the
+      ``SOURCE_DATE_EPOCH`` environment variable, which must be set.
+    - Bytecode (when requested) is compiled using explicit hash-based
+      invalidation (:pep:`552`; ``CHECKED_HASH``), so the generated ``.pyc``
+      files never embed timestamps. The code object's filename is the
+      logical installation path (built from ``scheme_dict``), never the
+      physical staging path (``destdir``).
+
+    Installations made with this option, from the same wheel, with the same
+    ``SOURCE_DATE_EPOCH`` value and scheme dictionary, produce byte-for-byte
+    identical contents regardless of the staging directory. Byte-identical
+    outputs across different Python versions are not guaranteed (bytecode
+    is version-specific).
+
+    :raises installer.exceptions.InvalidSourceDateEpoch: if
+        ``SOURCE_DATE_EPOCH`` is unset or not a valid non-negative integer.
+    :raises installer.exceptions.InvalidReproducibleConfiguration: if
+        bytecode compilation is requested but the interpreter cannot produce
+        hash-based ``.pyc`` files.
+    """
+
+    source_date_epoch: ClassVar[int]
+    """Unix timestamp used for all file times in reproducible mode."""
+
+    _created_dirs: ClassVar[set[Path]]
+    """Directories created during this installation, for metadata fixing."""
+
+    def __post_init__(self) -> None:
+        self._created_dirs: set[Path] = set()
+
+        if not self.reproducible:
+            return
+
+        self.source_date_epoch: int = _read_source_date_epoch()
+
+        if self.bytecode_optimization_levels and not _supports_hash_based_pyc():
+            msg = (
+                "Reproducible installation requires an interpreter that "
+                "supports hash-based pyc invalidation (PEP 552), but "
+                "py_compile.PycInvalidationMode.CHECKED_HASH is not "
+                "available in this Python interpreter. Disable bytecode "
+                "compilation (bytecode_optimization_levels=()) or use a "
+                "capable interpreter; timestamp-based pyc files are not "
+                "emitted in reproducible mode."
+            )
+            raise InvalidReproducibleConfiguration(msg)
+
+    def _normalize_dir_metadata(self, path: Path) -> None:
+        """Apply fixed mode and mtime to a directory in reproducible mode."""
+        if self.reproducible:
+            path.chmod(_REPRODUCIBLE_DIR_MODE)
+            os.utime(path, ns=(self.source_date_epoch * 1_000_000_000,) * 2)
+
+    def _normalize_file_metadata(
+        self, path: Path, is_executable: bool
+    ) -> None:
+        """Apply fixed mode and mtime to a regular file in reproducible mode."""
+        if self.reproducible:
+            mode = (
+                _REPRODUCIBLE_EXECUTABLE_MODE
+                if is_executable
+                else _REPRODUCIBLE_FILE_MODE
+            )
+            path.chmod(mode)
+            os.utime(path, ns=(self.source_date_epoch * 1_000_000_000,) * 2)
+
+    def _ensure_parent_dir(self, target_path: Path) -> None:
+        """Create a file's parent directory, tracking newly created dirs."""
+        parent_folder = target_path.parent
+        if parent_folder.exists():
+            return
+
+        if self.reproducible:
+            # Create the full chain ourselves, so every directory, including
+            # the intermediate ones, gets fixed mode and mtime.
+            for directory in reversed(parent_folder.parents):
+                if directory.exists() or directory == parent_folder.anchor:
+                    continue
+                directory.mkdir(parents=False, exist_ok=True)
+                self._created_dirs.add(directory)
+                self._normalize_dir_metadata(directory)
+            parent_folder.mkdir(parents=False, exist_ok=True)
+            self._created_dirs.add(parent_folder)
+            self._normalize_dir_metadata(parent_folder)
+        else:
+            parent_folder.mkdir(parents=True)
+
     def _path_with_destdir(self, scheme: Scheme, path: str) -> Path:
         # See https://docs.python.org/3/library/zipfile.html#zipfile.Path:
         #  When handling untrusted archives,
@@ -181,15 +338,18 @@ class SchemeDictionaryDestination(WheelDestination):
             message = f"File already exists: {target_path!s}"
             raise FileExistsError(message)
 
-        parent_folder = target_path.parent
-        if not parent_folder.exists():
-            parent_folder.mkdir(parents=True)
+        self._ensure_parent_dir(target_path)
 
         with target_path.open("wb") as f:
             hash_, size = copyfileobj_with_hashing(stream, f, self.hash_algorithm)
 
         if is_executable:
-            make_file_executable(target_path)
+            if self.reproducible:
+                target_path.chmod(_REPRODUCIBLE_EXECUTABLE_MODE)
+            else:
+                make_file_executable(target_path)
+
+        self._normalize_file_metadata(target_path, is_executable)
 
         return RecordEntry(path, Hash(self.hash_algorithm, hash_), size)
 
@@ -246,10 +406,11 @@ class SchemeDictionaryDestination(WheelDestination):
                 Scheme("scripts"), script_name, stream, is_executable=True
             )
 
-            path = self._path_with_destdir(Scheme("scripts"), script_name)
-            mode = path.stat().st_mode
-            mode |= (mode & 0o444) >> 2
-            path.chmod(mode)
+            if not self.reproducible:
+                path = self._path_with_destdir(Scheme("scripts"), script_name)
+                mode = path.stat().st_mode
+                mode |= (mode & 0o444) >> 2
+                path.chmod(mode)
 
             return entry
 
@@ -261,15 +422,57 @@ class SchemeDictionaryDestination(WheelDestination):
         ):
             return
 
-        import compileall
+        if not self.reproducible:
+            import compileall
 
+            target_path = self._path_with_destdir(scheme, record.path)
+            dir_path_to_embed = (
+                Path(self.scheme_dict[scheme]) / record.path
+            ).parent
+
+            for level in self.bytecode_optimization_levels:
+                compileall.compile_file(
+                    target_path, optimize=level, quiet=1, ddir=dir_path_to_embed
+                )
+            return
+
+        import importlib.util
+        import py_compile
+
+        # Physical location of the staged source file.
         target_path = self._path_with_destdir(scheme, record.path)
-        dir_path_to_embed = (Path(self.scheme_dict[scheme]) / record.path).parent
+        if target_path.suffix != ".py" or not target_path.exists():
+            return
+
+        # Logical, final location of the source file. Unlike the staging
+        # path, this does not embed a random temporary directory.
+        logical_path = Path(self.scheme_dict[scheme]) / record.path
 
         for level in self.bytecode_optimization_levels:
-            compileall.compile_file(
-                target_path, optimize=level, quiet=1, ddir=dir_path_to_embed
+            optimization = level if level >= 1 else ""
+            pyc_path = Path(
+                importlib.util.cache_from_source(
+                    os.fspath(target_path), optimization=optimization
+                )
             )
+            py_compile.compile(
+                file=os.fspath(target_path),
+                cfile=os.fspath(pyc_path),
+                dfile=os.fspath(logical_path),
+                doraise=True,
+                optimize=level,
+                # Explicit hash-based invalidation: the resulting .pyc embeds
+                # neither the source mtime nor the source size, so it does not
+                # depend on SOURCE_DATE_EPOCH clamping or wall-clock time.
+                invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH,
+                quiet=2,
+            )
+
+            # py_compile creates __pycache__ and the .pyc with default
+            # permissions and current mtime; normalize both.
+            self._created_dirs.add(pyc_path.parent)
+            self._normalize_dir_metadata(pyc_path.parent)
+            self._normalize_file_metadata(pyc_path, is_executable=False)
 
     def finalize_installation(
         self,
@@ -304,3 +507,10 @@ class SchemeDictionaryDestination(WheelDestination):
 
         for scheme_, record in record_list:
             self._compile_bytecode(scheme_, record)
+
+        if self.reproducible:
+            # Compilation and RECORD writes may have updated the mtime of
+            # directories created earlier; normalize everything once more.
+            for directory in self._created_dirs:
+                if directory.is_dir():
+                    self._normalize_dir_metadata(directory)

@@ -56,6 +56,14 @@ def _get_main_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="silently overwrite existing files",
     )
+    parser.add_argument(
+        "--reproducible",
+        action="store_true",
+        help=(
+            "perform a reproducible installation; requires SOURCE_DATE_EPOCH "
+            "to be set and uses hash-based pyc invalidation"
+        ),
+    )
     return parser
 
 
@@ -107,6 +115,7 @@ def _main(cli_args: Sequence[str], program: str | None = None) -> None:
                 bytecode_optimization_levels=bytecode_levels,
                 destdir=args.destdir,
                 overwrite_existing=args.overwrite_existing,
+                reproducible=args.reproducible,
             )
             installer.install(source, destination, {})
 
