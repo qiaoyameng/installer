@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `installer.uninstall` with a two-phase (plan/apply) uninstallation API
+  based on an installed distribution's RECORD file
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
 
