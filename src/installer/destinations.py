@@ -1,8 +1,9 @@
 """Handles all file writing and post-installation processing."""
 
+import contextlib
 import io
 import os
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -32,6 +33,17 @@ class WheelDestination:
     Subclasses provide the concrete script generation logic, as well as the RECORD file
     (re)writing.
     """
+
+    @contextlib.contextmanager
+    def installation_context(self) -> Iterator[None]:
+        """Scope the whole installation, including staging and commit.
+
+        The default implementation does nothing. Destinations that need to
+        roll back when *any* step of the installation fails (not just
+        :any:`finalize_installation`) can override this to wrap the full
+        operation.
+        """
+        yield
 
     def write_script(
         self, name: str, module: str, attr: str, section: "ScriptSection"

@@ -1,4 +1,5 @@
 import hashlib
+import contextlib
 import textwrap
 from io import BytesIO
 from unittest import mock
@@ -21,6 +22,7 @@ def hash_and_size(data):
 @pytest.fixture
 def mock_destination():
     retval = mock.Mock()
+    retval.installation_context = contextlib.nullcontext
 
     # A hacky approach to making sure we got the right objects going in.
     def custom_write_file(scheme, path, stream, is_executable):

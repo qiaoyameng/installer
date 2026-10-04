@@ -76,74 +76,76 @@ def install(
 
     """
     root_scheme = _process_WHEEL_file(source)
+    with destination.installation_context():
+        # RECORD handling
+        record_file_path = posixpath.join(source.dist_info_dir, "RECORD")
+        written_records = []
 
-    # RECORD handling
-    record_file_path = posixpath.join(source.dist_info_dir, "RECORD")
-    written_records = []
+        # Write the entry_points based scripts.
+        if "entry_points.txt" in source.dist_info_filenames:
+            entrypoints_text = source.read_dist_info("entry_points.txt")
+            for name, module, attr, section in parse_entrypoints(entrypoints_text):
+                record = destination.write_script(
+                    name=name,
+                    module=module,
+                    attr=attr,
+                    section=section,
+                )
+                written_records.append((Scheme("scripts"), record))
 
-    # Write the entry_points based scripts.
-    if "entry_points.txt" in source.dist_info_filenames:
-        entrypoints_text = source.read_dist_info("entry_points.txt")
-        for name, module, attr, section in parse_entrypoints(entrypoints_text):
-            record = destination.write_script(
-                name=name,
-                module=module,
-                attr=attr,
-                section=section,
-            )
-            written_records.append((Scheme("scripts"), record))
+        # Write all the files from the wheel.
+        for record_elements, stream, is_executable in source.get_contents():
+            source_record = RecordEntry.from_elements(*record_elements)
+            path = source_record.path
+            # Skip the RECORD, which is written at the end, based on this info.
+            if path == record_file_path:
+                continue
 
-    # Write all the files from the wheel.
-    for record_elements, stream, is_executable in source.get_contents():
-        source_record = RecordEntry.from_elements(*record_elements)
-        path = source_record.path
-        # Skip the RECORD, which is written at the end, based on this info.
-        if path == record_file_path:
-            continue
+            if "__pycache__" in path.split("/")[:-1]:
+                warnings.warn(
+                    (
+                        f"Skip installing {path} from {source.distribution}."
+                        " Installing files in a __pycache__ directory poses a security risk."
+                        " __pycache__ directories should not be included in wheels."
+                        f" This is probably an issue in the build process of '{source.distribution}'."
+                    ),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
 
-        if "__pycache__" in path.split("/")[:-1]:
-            warnings.warn(
-                (
-                    f"Skip installing {path} from {source.distribution}."
-                    " Installing files in a __pycache__ directory poses a security risk."
-                    " __pycache__ directories should not be included in wheels."
-                    f" This is probably an issue in the build process of '{source.distribution}'."
-                ),
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            continue
-
-        # Figure out where to write this file.
-        scheme, destination_path = _determine_scheme(
-            path=path,
-            source=source,
-            root_scheme=root_scheme,
-        )
-        record = destination.write_file(
-            scheme=scheme,
-            path=destination_path,
-            stream=stream,
-            is_executable=is_executable,
-        )
-        written_records.append((scheme, record))
-
-    # Write all the installation-specific metadata
-    for filename, contents in additional_metadata.items():
-        path = posixpath.join(source.dist_info_dir, filename)
-
-        with BytesIO(contents) as other_stream:
-            record = destination.write_file(
-                scheme=root_scheme,
+            # Figure out where to write this file.
+            scheme, destination_path = _determine_scheme(
                 path=path,
-                stream=other_stream,
-                is_executable=False,
+                source=source,
+                root_scheme=root_scheme,
             )
-        written_records.append((root_scheme, record))
+            record = destination.write_file(
+                scheme=scheme,
+                path=destination_path,
+                stream=stream,
+                is_executable=is_executable,
+            )
+            written_records.append((scheme, record))
 
-    written_records.append((root_scheme, RecordEntry(record_file_path, None, None)))
-    destination.finalize_installation(
-        scheme=root_scheme,
-        record_file_path=record_file_path,
-        records=written_records,
-    )
+        # Write all the installation-specific metadata
+        for filename, contents in additional_metadata.items():
+            path = posixpath.join(source.dist_info_dir, filename)
+
+            with BytesIO(contents) as other_stream:
+                record = destination.write_file(
+                    scheme=root_scheme,
+                    path=path,
+                    stream=other_stream,
+                    is_executable=False,
+                )
+            written_records.append((root_scheme, record))
+
+        written_records.append(
+            (root_scheme, RecordEntry(record_file_path, None, None))
+        )
+        destination.finalize_installation(
+            scheme=root_scheme,
+            record_file_path=record_file_path,
+            records=written_records,
+        )

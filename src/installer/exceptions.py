@@ -7,3 +7,7 @@ class InstallerError(Exception):
 
 class InvalidWheelSource(InstallerError):
     """When a wheel source violates a contract, or is not supported."""
+
+
+class TransactionError(InstallerError):
+    """When a transactional installation can not be completed or recovered."""

@@ -4,6 +4,11 @@
 
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
+- Add ``TransactionalSchemeDictionaryDestination``, an opt-in destination that
+  prepares files, scripts, bytecode and ``RECORD`` in a temporary staging area,
+  validates everything, then commits to the scheme roots with a persistent
+  journal tracking replacements and backups, so an interrupted installation can
+  be resumed or rolled back.
 
 ## v1.0.1 (May 11, 2026)
 - Include docs and tests in sdist again (#322)
