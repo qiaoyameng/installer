@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `TransactionalSchemeDictionaryDestination`, which stages wheel files,
+  generated scripts, bytecode and `RECORD` in a temporary area and uses a
+  persistent manifest to resume or roll back an interrupted replacement.
 - Use `os.path.commonpath` instead of `os.path.commonprefix` to address deprecation
   warnings on Python 3.15 (#345)
 
